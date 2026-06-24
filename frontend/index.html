@@ -1,45 +1,72 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>HRP Portfolio Manager</title>
+    <title>HRP Portfolio Terminal</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand-block">
-          <p class="eyebrow">Portfolio Lab</p>
-          <h1>HRP Portfolio Manager</h1>
-          <p class="brand-copy">A live allocation and risk dashboard for a barbell-style equity and Treasury portfolio.</p>
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="logo-mark" aria-hidden="true"></div>
+        <div>
+          <div class="product-name">HRP Terminal</div>
+          <div class="product-subtitle">Hierarchical Risk Parity portfolio workstation</div>
         </div>
+        <nav class="nav-tabs" aria-label="Dashboard sections">
+          <button class="nav-tab active" data-tab="overview">Overview</button>
+          <button class="nav-tab" data-tab="allocation">Allocation</button>
+          <button class="nav-tab" data-tab="backtest">Backtest</button>
+          <button class="nav-tab" data-tab="risk">Risk</button>
+          <button class="nav-tab" data-tab="market">Market</button>
+        </nav>
+      </div>
 
-        <section class="control-group">
-          <label for="tickers">Assets</label>
+      <div class="topbar-right">
+        <div class="market-tape">
+          <span class="tape-item">AS OF <strong id="latestDate">--</strong></span>
+          <span class="tape-item">BENCH <strong id="tapeBenchmark">SPY</strong></span>
+          <span class="tape-item">STATE <strong id="tapeState">IDLE</strong></span>
+        </div>
+        <button id="themeToggle" class="icon-button" title="Toggle theme">MODE</button>
+      </div>
+    </header>
+
+    <div class="terminal-layout">
+      <aside class="sidebar">
+        <section class="side-section">
+          <div class="section-label">Universe</div>
           <textarea id="tickers" rows="4">NVDA, AAPL, AMZN, JPM, COST, UNH, TLT</textarea>
           <div class="preset-row">
-            <button class="ghost-button" data-preset="default">Default</button>
-            <button class="ghost-button" data-preset="defensive">Defensive</button>
-            <button class="ghost-button" data-preset="growth">Growth</button>
+            <button class="micro-button active" data-preset="default">Core</button>
+            <button class="micro-button" data-preset="defensive">Defensive</button>
+            <button class="micro-button" data-preset="growth">Growth</button>
           </div>
         </section>
 
-        <section class="control-grid">
-          <div>
-            <label for="startDate">Start date</label>
-            <input id="startDate" type="date" value="2010-01-01">
+        <section class="side-section">
+          <div class="section-label">Date Range</div>
+          <div class="input-grid">
+            <label>
+              <span>Start</span>
+              <input id="startDate" type="date" value="2010-01-01">
+            </label>
+            <label>
+              <span>End</span>
+              <input id="endDate" type="date">
+            </label>
           </div>
-          <div>
-            <label for="endDate">End date</label>
-            <input id="endDate" type="date">
-          </div>
-          <div>
-            <label for="benchmark">Benchmark</label>
+        </section>
+
+        <section class="side-section">
+          <div class="section-label">Model</div>
+          <label>
+            <span>Benchmark</span>
             <input id="benchmark" type="text" value="SPY">
-          </div>
-          <div>
-            <label for="linkageMethod">Clustering</label>
+          </label>
+          <label>
+            <span>Clustering</span>
             <select id="linkageMethod">
               <option value="single">single</option>
               <option value="complete">complete</option>
@@ -47,194 +74,178 @@
               <option value="weighted">weighted</option>
               <option value="ward">ward</option>
             </select>
+          </label>
+          <div class="slider-block">
+            <div class="slider-label">
+              <span>Minimum weight</span>
+              <strong id="minWeightValue">8%</strong>
+            </div>
+            <input id="minWeight" type="range" min="0" max="14" value="8" step="1">
           </div>
-        </section>
-
-        <section class="control-group compact-controls">
-          <div class="range-row">
-            <label for="minWeight">Minimum weight</label>
-            <span id="minWeightValue">8%</span>
-          </div>
-          <input id="minWeight" type="range" min="0" max="14" value="8" step="1">
-
-          <div class="number-row">
-            <div>
-              <label for="trainingWindow">Training days</label>
+          <div class="input-grid">
+            <label>
+              <span>Training</span>
               <input id="trainingWindow" type="number" min="126" max="1260" value="504" step="21">
-            </div>
-            <div>
-              <label for="rebalanceFreq">Rebalance days</label>
+            </label>
+            <label>
+              <span>Rebalance</span>
               <input id="rebalanceFreq" type="number" min="21" max="252" value="63" step="21">
-            </div>
+            </label>
           </div>
         </section>
 
-        <button id="runAnalysis" class="primary-button">Run analysis</button>
-
+        <button id="runAnalysis" class="run-button">Run model</button>
         <div class="run-status" id="runStatus">
           <span class="status-dot"></span>
           <span>Ready</span>
         </div>
+
+        <section class="pipeline">
+          <div class="section-label">Pipeline</div>
+          <div class="pipeline-step active" data-step="data">
+            <span>01</span>
+            <strong>Price data</strong>
+          </div>
+          <div class="pipeline-step" data-step="hrp">
+            <span>02</span>
+            <strong>HRP cluster</strong>
+          </div>
+          <div class="pipeline-step" data-step="backtest">
+            <span>03</span>
+            <strong>Walk-forward</strong>
+          </div>
+          <div class="pipeline-step" data-step="report">
+            <span>04</span>
+            <strong>Risk report</strong>
+          </div>
+        </section>
       </aside>
 
       <main class="main-content">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Live market data plus walk-forward testing</p>
-            <h2>Correlation-aware allocation, drawdown control, and benchmark comparison.</h2>
-          </div>
-          <div class="asof-block">
-            <span>Data through</span>
-            <strong id="latestDate">Waiting for run</strong>
-          </div>
-        </header>
-
-        <section class="progress-strip">
-          <div class="progress-step active" data-step="data">Data</div>
-          <div class="progress-step" data-step="hrp">HRP model</div>
-          <div class="progress-step" data-step="backtest">Backtest</div>
-          <div class="progress-step" data-step="report">Report</div>
-        </section>
-
-        <section class="metric-grid" id="metricGrid">
-          <article class="metric-card">
-            <span>Total return</span>
-            <strong id="totalReturn">-</strong>
-            <small>HRP strategy</small>
-          </article>
-          <article class="metric-card">
-            <span>Max drawdown</span>
-            <strong id="maxDrawdown">-</strong>
-            <small>Peak-to-trough loss</small>
-          </article>
-          <article class="metric-card">
-            <span>Sharpe ratio</span>
-            <strong id="sharpeRatio">-</strong>
-            <small>Annualized</small>
-          </article>
-          <article class="metric-card">
-            <span>Downside capture</span>
-            <strong id="downsideCapture">-</strong>
-            <small>Versus benchmark</small>
-          </article>
-        </section>
-
-        <nav class="tab-bar">
-          <button class="tab-button active" data-tab="overview">Overview</button>
-          <button class="tab-button" data-tab="allocation">Allocation</button>
-          <button class="tab-button" data-tab="backtest">Backtest</button>
-          <button class="tab-button" data-tab="risk">Risk</button>
-          <button class="tab-button" data-tab="market">Market</button>
-        </nav>
-
         <section id="errorPanel" class="error-panel hidden"></section>
 
+        <section class="kpi-row">
+          <article class="kpi-card accent-teal">
+            <span>Total return</span>
+            <strong id="totalReturn">--</strong>
+            <small>HRP walk-forward</small>
+          </article>
+          <article class="kpi-card accent-green">
+            <span>Benchmark</span>
+            <strong id="benchmarkReturn">--</strong>
+            <small id="benchmarkLabel">SPY total return</small>
+          </article>
+          <article class="kpi-card accent-red">
+            <span>Max drawdown</span>
+            <strong id="maxDrawdown">--</strong>
+            <small>Worst peak-to-trough move</small>
+          </article>
+          <article class="kpi-card accent-amber">
+            <span>Sharpe</span>
+            <strong id="sharpeRatio">--</strong>
+            <small>Annualized risk-adjusted return</small>
+          </article>
+          <article class="kpi-card accent-blue">
+            <span>Downside capture</span>
+            <strong id="downsideCapture">--</strong>
+            <small>Loss participation vs benchmark</small>
+          </article>
+        </section>
+
         <section class="tab-panel active" id="overview">
-          <div class="two-column">
-            <section class="panel">
-              <div class="panel-heading">
+          <div class="workspace-grid">
+            <section class="panel price-panel">
+              <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Project outlook</p>
-                  <h3>What the model is doing</h3>
+                  <div class="panel-title"><span class="live-dot"></span>Price Action</div>
+                  <p>OHLC candles from the selected asset universe</p>
                 </div>
+                <div id="symbolRail" class="symbol-rail"></div>
               </div>
-              <div class="outlook-grid">
-                <article>
-                  <strong>1. Clean price history</strong>
-                  <p>Downloads adjusted closes, forward-fills market holidays, and clips extreme daily return outliers.</p>
-                </article>
-                <article>
-                  <strong>2. Cluster related assets</strong>
-                  <p>Uses Hierarchical Risk Parity to group assets by correlation before assigning capital.</p>
-                </article>
-                <article>
-                  <strong>3. Apply a portfolio floor</strong>
-                  <p>Maintains a minimum holding size so the allocation does not collapse into one dominant name.</p>
-                </article>
-                <article>
-                  <strong>4. Test it forward</strong>
-                  <p>Trains on a rolling window, trades the next period, and compares the result with the benchmark.</p>
-                </article>
+              <div class="canvas-shell">
+                <canvas id="candleCanvas" height="360"></canvas>
+                <div id="candleTooltip" class="chart-tooltip"></div>
               </div>
             </section>
 
-            <section class="panel">
-              <div class="panel-heading">
+            <section class="panel alloc-panel">
+              <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Current read</p>
-                  <h3>Strategy snapshot</h3>
+                  <div class="panel-title">Allocation Ring</div>
+                  <p>Constrained HRP weights</p>
                 </div>
               </div>
-              <div class="snapshot-list">
-                <div><span>Largest position</span><strong id="largestWeight">-</strong></div>
-                <div><span>Effective positions</span><strong id="effectivePositions">-</strong></div>
-                <div><span>Upside capture</span><strong id="upsideCapture">-</strong></div>
-                <div><span>Model clusters</span><strong id="clusterCount">-</strong></div>
-              </div>
+              <canvas id="allocationCanvas" width="250" height="250"></canvas>
+              <div id="allocationLegend" class="allocation-legend"></div>
             </section>
           </div>
 
-          <section class="panel">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Growth path</p>
-                <h3>HRP strategy vs benchmark</h3>
+          <div class="workspace-grid lower">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-title">Equity Curve</div>
+                  <p>Growth of one dollar, strategy vs benchmark</p>
+                </div>
               </div>
-            </div>
-            <div id="equityChart" class="chart"></div>
-          </section>
+              <canvas id="equityCanvas" height="260"></canvas>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-title">Strategy Snapshot</div>
+                  <p>Concentration and capture metrics</p>
+                </div>
+              </div>
+              <div class="snapshot-grid">
+                <div><span>Largest weight</span><strong id="largestWeight">--</strong></div>
+                <div><span>Effective positions</span><strong id="effectivePositions">--</strong></div>
+                <div><span>Upside capture</span><strong id="upsideCapture">--</strong></div>
+                <div><span>Clusters</span><strong id="clusterCount">--</strong></div>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="tab-panel" id="allocation">
-          <div class="two-column wide-left">
-            <section class="panel">
-              <div class="panel-heading">
-                <div>
-                  <p class="eyebrow">Capital weights</p>
-                  <h3>Final constrained allocation</h3>
-                </div>
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Holdings Matrix</div>
+                <p>Portfolio weights, floor status, live tape and realized volatility</p>
               </div>
-              <div id="allocationChart" class="allocation-chart"></div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-heading">
-                <div>
-                  <p class="eyebrow">Holdings</p>
-                  <h3>Weight table</h3>
-                </div>
-              </div>
-              <div id="weightsTable" class="table-wrap"></div>
-            </section>
-          </div>
+            </div>
+            <div id="weightsTable" class="table-wrap"></div>
+          </section>
         </section>
 
         <section class="tab-panel" id="backtest">
-          <div class="two-column">
+          <div class="workspace-grid lower">
             <section class="panel">
-              <div class="panel-heading">
+              <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Drawdown</p>
-                  <h3>Stress profile</h3>
+                  <div class="panel-title">Drawdown Tape</div>
+                  <p>Loss depth through each market regime</p>
                 </div>
               </div>
-              <div id="drawdownChart" class="chart"></div>
+              <canvas id="drawdownCanvas" height="300"></canvas>
             </section>
             <section class="panel">
-              <div class="panel-heading">
+              <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Regime checks</p>
-                  <h3>Known market windows</h3>
+                  <div class="panel-title">Event Windows</div>
+                  <p>Stress and rally periods from the backtest</p>
                 </div>
               </div>
               <div id="eventGrid" class="event-grid"></div>
             </section>
           </div>
           <section class="panel">
-            <div class="panel-heading">
+            <div class="panel-header">
               <div>
-                <p class="eyebrow">Best relative months</p>
-                <h3>Largest monthly spreads over benchmark</h3>
+                <div class="panel-title">Best Relative Months</div>
+                <p>Largest HRP spreads over benchmark</p>
               </div>
             </div>
             <div id="monthlyTable" class="table-wrap"></div>
@@ -242,22 +253,21 @@
         </section>
 
         <section class="tab-panel" id="risk">
-          <div class="two-column wide-left">
+          <div class="workspace-grid lower">
             <section class="panel">
-              <div class="panel-heading">
+              <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Correlation</p>
-                  <h3>Asset relationship map</h3>
+                  <div class="panel-title">Correlation Heatmap</div>
+                  <p>Positive clusters, diversifiers, and Treasury hedge behavior</p>
                 </div>
               </div>
               <div id="correlationHeatmap" class="heatmap"></div>
             </section>
-
             <section class="panel">
-              <div class="panel-heading">
+              <div class="panel-header">
                 <div>
-                  <p class="eyebrow">Volatility</p>
-                  <h3>Risk ranking</h3>
+                  <div class="panel-title">Volatility Stack</div>
+                  <p>Daily return volatility by asset</p>
                 </div>
               </div>
               <div id="volatilityList" class="rank-list"></div>
@@ -267,10 +277,10 @@
 
         <section class="tab-panel" id="market">
           <section class="panel">
-            <div class="panel-heading">
+            <div class="panel-header">
               <div>
-                <p class="eyebrow">Market tape</p>
-                <h3>Latest prices, momentum, and realized volatility</h3>
+                <div class="panel-title">Market Monitor</div>
+                <p>Latest close, short-term momentum, and realized volatility</p>
               </div>
             </div>
             <div id="marketGrid" class="market-grid"></div>
@@ -278,6 +288,12 @@
         </section>
       </main>
     </div>
+
+    <footer class="status-bar">
+      <span>ENGINE: HRP</span>
+      <span>DATA: YFINANCE</span>
+      <span id="statusFooter">READY</span>
+    </footer>
 
     <script src="/app.js"></script>
   </body>

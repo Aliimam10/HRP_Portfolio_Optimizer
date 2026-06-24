@@ -4,7 +4,10 @@ const presets = {
   growth: "NVDA, MSFT, AAPL, AMZN, GOOGL, META, TLT",
 };
 
+const palette = ["#00d4aa", "#4f8cff", "#3dd68c", "#e8b84b", "#e05252", "#8b5cf6", "#38bdf8", "#f97316"];
+
 let activeResult = null;
+let activeTicker = null;
 let progressTimer = null;
 
 const elements = {
@@ -20,24 +23,33 @@ const elements = {
   runAnalysis: document.querySelector("#runAnalysis"),
   runStatus: document.querySelector("#runStatus span:last-child"),
   errorPanel: document.querySelector("#errorPanel"),
+  candleCanvas: document.querySelector("#candleCanvas"),
+  candleTooltip: document.querySelector("#candleTooltip"),
+  allocationCanvas: document.querySelector("#allocationCanvas"),
+  equityCanvas: document.querySelector("#equityCanvas"),
+  drawdownCanvas: document.querySelector("#drawdownCanvas"),
 };
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 function formatPct(value, digits = 1) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  if (value === null || value === undefined || Number.isNaN(value)) return "--";
   return `${(value * 100).toFixed(digits)}%`;
 }
 
 function formatNumber(value, digits = 2) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  if (value === null || value === undefined || Number.isNaN(value)) return "--";
   return value.toFixed(digits);
 }
 
 function formatMoney(value) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  if (value === null || value === undefined || Number.isNaN(value)) return "--";
   return `$${value.toFixed(2)}`;
 }
 
@@ -51,14 +63,15 @@ function setText(id, value) {
   document.querySelector(`#${id}`).textContent = value;
 }
 
-function setStep(step) {
-  document.querySelectorAll(".progress-step").forEach((node) => {
-    node.classList.toggle("active", node.dataset.step === step);
-  });
-}
-
 function setStatus(text) {
   elements.runStatus.textContent = text;
+  setText("statusFooter", text.toUpperCase());
+}
+
+function setStep(step) {
+  document.querySelectorAll(".pipeline-step").forEach((node) => {
+    node.classList.toggle("active", node.dataset.step === step);
+  });
 }
 
 function showError(message) {
@@ -91,7 +104,7 @@ function startProgress() {
   progressTimer = setInterval(() => {
     index = Math.min(index + 1, steps.length - 1);
     setStep(steps[index]);
-  }, 850);
+  }, 700);
 }
 
 function stopProgress() {
@@ -103,6 +116,7 @@ async function runAnalysis() {
   clearError();
   elements.runAnalysis.disabled = true;
   setStatus("Running");
+  setText("tapeState", "RUNNING");
   startProgress();
 
   try {
@@ -111,7 +125,6 @@ async function runAnalysis() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(collectPayload()),
     });
-
     const data = await response.json();
 
     if (!data.ok) {
@@ -119,11 +132,14 @@ async function runAnalysis() {
     }
 
     activeResult = data.result;
+    activeTicker = activeResult.config.tickers[0];
     renderDashboard(activeResult);
     setStatus("Complete");
+    setText("tapeState", "LIVE");
   } catch (error) {
     showError(error.message);
     setStatus("Needs attention");
+    setText("tapeState", "ERROR");
   } finally {
     stopProgress();
     elements.runAnalysis.disabled = false;
@@ -132,8 +148,13 @@ async function runAnalysis() {
 
 function renderDashboard(result) {
   const strategy = result.metrics.strategy;
+  const benchmark = result.metrics.benchmark;
+
   setText("latestDate", result.config.latestDate);
+  setText("tapeBenchmark", result.config.benchmark);
+  setText("benchmarkLabel", `${result.config.benchmark} total return`);
   setText("totalReturn", formatPct(strategy.totalReturn));
+  setText("benchmarkReturn", formatPct(benchmark.totalReturn));
   setText("maxDrawdown", formatPct(strategy.maxDrawdown));
   setText("sharpeRatio", formatNumber(strategy.sharpe));
   setText("downsideCapture", formatPct(result.metrics.downsideCapture));
@@ -142,16 +163,18 @@ function renderDashboard(result) {
   setText("upsideCapture", formatPct(result.metrics.upsideCapture));
   setText("clusterCount", String(result.clusterCount));
 
-  drawLineChart("equityChart", result.series.equity, [
-    { key: "strategy", label: "HRP", color: "#1f6feb" },
-    { key: "benchmark", label: result.config.benchmark, color: "#64748b" },
+  drawSymbolRail(result.config.tickers);
+  drawCandles();
+  drawAllocationRing(result.weights);
+  drawLineCanvas(elements.equityCanvas, result.series.equity, [
+    { key: "strategy", label: "HRP", color: cssVar("--accent") },
+    { key: "benchmark", label: result.config.benchmark, color: cssVar("--text-secondary") },
   ]);
-  drawLineChart("drawdownChart", result.series.drawdown, [
-    { key: "strategy", label: "HRP", color: "#c2413b" },
-    { key: "benchmark", label: result.config.benchmark, color: "#64748b" },
-  ]);
-  drawAllocation(result.weights);
-  drawWeightsTable(result.weights);
+  drawLineCanvas(elements.drawdownCanvas, result.series.drawdown, [
+    { key: "strategy", label: "HRP", color: cssVar("--red") },
+    { key: "benchmark", label: result.config.benchmark, color: cssVar("--text-secondary") },
+  ], true);
+  drawWeightsTable(result.weights, result.market);
   drawEvents(result.events);
   drawMonthlyTable(result.monthlyLeaders);
   drawHeatmap(result.risk.correlation);
@@ -159,7 +182,165 @@ function renderDashboard(result) {
   drawMarket(result.market);
 }
 
-function valueExtent(series, lines) {
+function prepareCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+  canvas.height = Math.max(1, Math.floor(canvas.getAttribute("height") * ratio));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return { ctx, width: rect.width, height: Number(canvas.getAttribute("height")) };
+}
+
+function drawSymbolRail(tickers) {
+  const rail = document.querySelector("#symbolRail");
+  rail.innerHTML = tickers
+    .map(
+      (ticker) => `<button class="symbol-button ${ticker === activeTicker ? "active" : ""}" data-ticker="${ticker}">${ticker}</button>`
+    )
+    .join("");
+
+  rail.querySelectorAll(".symbol-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeTicker = button.dataset.ticker;
+      drawSymbolRail(activeResult.config.tickers);
+      drawCandles();
+    });
+  });
+}
+
+function drawCandles() {
+  if (!activeResult || !activeTicker) return;
+
+  const candles = activeResult.candles[activeTicker] || [];
+  const canvas = elements.candleCanvas;
+  const { ctx, width, height } = prepareCanvas(canvas);
+  const padding = { top: 22, right: 58, bottom: 30, left: 12 };
+  ctx.clearRect(0, 0, width, height);
+
+  if (!candles.length) {
+    ctx.fillStyle = cssVar("--text-muted");
+    ctx.fillText("No candle data returned.", 20, 40);
+    return;
+  }
+
+  const lows = candles.map((row) => row.low);
+  const highs = candles.map((row) => row.high);
+  const minPrice = Math.min(...lows);
+  const maxPrice = Math.max(...highs);
+  const span = maxPrice - minPrice || 1;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const slot = plotWidth / candles.length;
+  const bodyWidth = Math.max(3, Math.min(10, slot * 0.62));
+
+  const y = (value) => padding.top + (1 - (value - minPrice) / span) * plotHeight;
+  const x = (index) => padding.left + index * slot + slot / 2;
+
+  ctx.strokeStyle = cssVar("--grid");
+  ctx.lineWidth = 1;
+  ctx.font = "11px " + cssVar("--mono");
+  ctx.fillStyle = cssVar("--text-muted");
+  for (let i = 0; i <= 4; i += 1) {
+    const yPos = padding.top + (plotHeight / 4) * i;
+    const value = maxPrice - (span / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, yPos);
+    ctx.lineTo(width - padding.right, yPos);
+    ctx.stroke();
+    ctx.fillText(value.toFixed(2), width - padding.right + 8, yPos + 4);
+  }
+
+  candles.forEach((row, index) => {
+    const up = row.close >= row.open;
+    const color = up ? cssVar("--green") : cssVar("--red");
+    const cx = x(index);
+    const openY = y(row.open);
+    const closeY = y(row.close);
+    const highY = y(row.high);
+    const lowY = y(row.low);
+    const top = Math.min(openY, closeY);
+    const bodyHeight = Math.max(2, Math.abs(closeY - openY));
+
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(cx, highY);
+    ctx.lineTo(cx, lowY);
+    ctx.stroke();
+    ctx.fillRect(cx - bodyWidth / 2, top, bodyWidth, bodyHeight);
+  });
+
+  ctx.fillStyle = cssVar("--text-muted");
+  ctx.fillText(candles[0].date, padding.left, height - 9);
+  ctx.fillText(candles[candles.length - 1].date, width - padding.right - 78, height - 9);
+
+  canvas.onmousemove = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const index = Math.max(0, Math.min(candles.length - 1, Math.floor((mouseX - padding.left) / slot)));
+    const candle = candles[index];
+    elements.candleTooltip.style.display = "block";
+    elements.candleTooltip.style.left = `${Math.min(mouseX + 12, rect.width - 185)}px`;
+    elements.candleTooltip.style.top = `${event.clientY - rect.top + 14}px`;
+    elements.candleTooltip.innerHTML = `
+      <strong>${activeTicker} ${candle.date}</strong><br>
+      O ${formatMoney(candle.open)} &nbsp; H ${formatMoney(candle.high)}<br>
+      L ${formatMoney(candle.low)} &nbsp; C ${formatMoney(candle.close)}
+    `;
+  };
+
+  canvas.onmouseleave = () => {
+    elements.candleTooltip.style.display = "none";
+  };
+}
+
+function drawAllocationRing(weights) {
+  const canvas = elements.allocationCanvas;
+  const { ctx, width, height } = prepareCanvas(canvas);
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(width, height) * 0.34;
+  const lineWidth = 24;
+  let startAngle = -Math.PI / 2;
+
+  ctx.clearRect(0, 0, width, height);
+
+  weights.forEach((row, index) => {
+    const angle = row.weight * Math.PI * 2;
+    ctx.beginPath();
+    ctx.strokeStyle = palette[index % palette.length];
+    ctx.lineWidth = lineWidth;
+    ctx.arc(centerX, centerY, radius, startAngle, startAngle + angle);
+    ctx.stroke();
+    startAngle += angle;
+  });
+
+  ctx.fillStyle = cssVar("--text-primary");
+  ctx.font = "700 18px " + cssVar("--mono");
+  ctx.textAlign = "center";
+  ctx.fillText("HRP", centerX, centerY - 2);
+  ctx.fillStyle = cssVar("--text-muted");
+  ctx.font = "11px " + cssVar("--mono");
+  ctx.fillText("weights", centerX, centerY + 16);
+  ctx.textAlign = "left";
+
+  document.querySelector("#allocationLegend").innerHTML = weights
+    .map(
+      (row, index) => `
+        <div class="legend-row">
+          <span class="legend-left">
+            <span class="legend-dot" style="background:${palette[index % palette.length]}"></span>
+            <strong>${row.ticker}</strong>
+          </span>
+          <span>${formatPct(row.weight, 2)}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function chartExtent(series, lines) {
   const values = [];
   series.forEach((point) => {
     lines.forEach((line) => {
@@ -171,103 +352,87 @@ function valueExtent(series, lines) {
   return [Math.min(...values), Math.max(...values)];
 }
 
-function drawLineChart(containerId, series, lines) {
-  const container = document.querySelector(`#${containerId}`);
-  if (!series.length) {
-    container.innerHTML = "<p>No chart data returned.</p>";
-    return;
+function drawLineCanvas(canvas, series, lines, percentAxis = false) {
+  const { ctx, width, height } = prepareCanvas(canvas);
+  const padding = { top: 22, right: 22, bottom: 30, left: 54 };
+  ctx.clearRect(0, 0, width, height);
+
+  if (!series.length) return;
+
+  const [minValue, maxValue] = chartExtent(series, lines);
+  const span = maxValue - minValue || 1;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const x = (index) => padding.left + (index / Math.max(series.length - 1, 1)) * plotWidth;
+  const y = (value) => padding.top + (1 - (value - minValue) / span) * plotHeight;
+
+  ctx.strokeStyle = cssVar("--grid");
+  ctx.fillStyle = cssVar("--text-muted");
+  ctx.font = "11px " + cssVar("--mono");
+  for (let i = 0; i <= 4; i += 1) {
+    const yPos = padding.top + (plotHeight / 4) * i;
+    const value = maxValue - (span / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, yPos);
+    ctx.lineTo(width - padding.right, yPos);
+    ctx.stroke();
+    ctx.fillText(percentAxis ? formatPct(value, 0) : formatNumber(value, 1), 8, yPos + 4);
   }
 
-  const width = 900;
-  const height = 342;
-  const padding = { top: 24, right: 26, bottom: 34, left: 52 };
-  const [minValue, maxValue] = valueExtent(series, lines);
-  const span = maxValue - minValue || 1;
+  lines.forEach((line) => {
+    ctx.strokeStyle = line.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    series.forEach((point, index) => {
+      const xPos = x(index);
+      const yPos = y(point[line.key]);
+      if (index === 0) ctx.moveTo(xPos, yPos);
+      else ctx.lineTo(xPos, yPos);
+    });
+    ctx.stroke();
+  });
 
-  const x = (index) =>
-    padding.left + (index / Math.max(series.length - 1, 1)) * (width - padding.left - padding.right);
-  const y = (value) =>
-    padding.top + (1 - (value - minValue) / span) * (height - padding.top - padding.bottom);
+  lines.forEach((line, index) => {
+    const xPos = padding.left + index * 92;
+    ctx.fillStyle = line.color;
+    ctx.fillRect(xPos, 8, 10, 10);
+    ctx.fillStyle = cssVar("--text-secondary");
+    ctx.fillText(line.label, xPos + 15, 17);
+  });
 
-  const grid = [0, 0.25, 0.5, 0.75, 1]
-    .map((ratio) => {
-      const yPos = padding.top + ratio * (height - padding.top - padding.bottom);
-      const value = maxValue - ratio * span;
-      return `
-        <line x1="${padding.left}" y1="${yPos}" x2="${width - padding.right}" y2="${yPos}" stroke="#e5e7eb" />
-        <text x="10" y="${yPos + 4}" class="axis-label">${containerId === "drawdownChart" ? formatPct(value, 0) : formatNumber(value, 1)}</text>
-      `;
-    })
-    .join("");
-
-  const paths = lines
-    .map((line) => {
-      const points = series
-        .map((point, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${y(point[line.key])}`)
-        .join(" ");
-      return `<path d="${points}" fill="none" stroke="${line.color}" stroke-width="3" />`;
-    })
-    .join("");
-
-  const legend = lines
-    .map((line, index) => {
-      const xPos = padding.left + index * 104;
-      return `
-        <rect x="${xPos}" y="8" width="12" height="12" fill="${line.color}" rx="2"></rect>
-        <text x="${xPos + 18}" y="19" class="chart-label">${line.label}</text>
-      `;
-    })
-    .join("");
-
-  const firstDate = series[0].date;
-  const lastDate = series[series.length - 1].date;
-
-  container.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" role="img">
-      ${grid}
-      ${paths}
-      ${legend}
-      <text x="${padding.left}" y="${height - 8}" class="axis-label">${firstDate}</text>
-      <text x="${width - padding.right - 78}" y="${height - 8}" class="axis-label">${lastDate}</text>
-    </svg>
-  `;
+  ctx.fillStyle = cssVar("--text-muted");
+  ctx.fillText(series[0].date, padding.left, height - 9);
+  ctx.fillText(series[series.length - 1].date, width - padding.right - 78, height - 9);
 }
 
-function drawAllocation(weights) {
-  const container = document.querySelector("#allocationChart");
+function drawWeightsTable(weights, market) {
+  const marketByTicker = Object.fromEntries(market.map((row) => [row.ticker, row]));
   const maxWeight = Math.max(...weights.map((row) => row.weight));
 
-  container.innerHTML = weights
-    .map((row) => {
-      const width = (row.weight / maxWeight) * 100;
-      return `
-        <div class="allocation-row">
-          <strong>${row.ticker}</strong>
-          <div class="bar-track">
-            <div class="bar-fill ${row.floor ? "floor" : ""}" style="width:${width}%"></div>
-          </div>
-          <span>${formatPct(row.weight)}</span>
-        </div>
-      `;
-    })
-    .join("");
-}
-
-function drawWeightsTable(weights) {
   document.querySelector("#weightsTable").innerHTML = `
     <table>
-      <thead><tr><th>Ticker</th><th>Weight</th><th>Status</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Ticker</th><th>Weight</th><th>Bar</th><th>Status</th><th>Last</th><th>1D</th><th>1M</th><th>Vol</th>
+        </tr>
+      </thead>
       <tbody>
         ${weights
-          .map(
-            (row) => `
+          .map((row) => {
+            const tape = marketByTicker[row.ticker] || {};
+            return `
               <tr>
                 <td><strong>${row.ticker}</strong></td>
                 <td>${formatPct(row.weight, 2)}</td>
-                <td>${row.floor ? "At floor" : "Flexible"}</td>
+                <td><div class="bar-track"><div class="bar-fill" style="width:${(row.weight / maxWeight) * 100}%"></div></div></td>
+                <td>${row.floor ? "Floor" : "Flexible"}</td>
+                <td>${formatMoney(tape.latest)}</td>
+                <td class="${pctClass(tape.oneDay)}">${formatPct(tape.oneDay)}</td>
+                <td class="${pctClass(tape.oneMonth)}">${formatPct(tape.oneMonth)}</td>
+                <td>${formatPct(tape.realizedVol)}</td>
               </tr>
-            `
-          )
+            `;
+          })
           .join("")}
       </tbody>
     </table>
@@ -280,9 +445,9 @@ function drawEvents(events) {
       (event) => `
         <article class="event-card">
           <strong>${event.name}</strong>
-          <p>HRP: <span class="${pctClass(event.strategy)}">${formatPct(event.strategy)}</span></p>
-          <p>Benchmark: <span class="${pctClass(event.benchmark)}">${formatPct(event.benchmark)}</span></p>
-          <p>Spread: <span class="${pctClass(event.spread)}">${formatPct(event.spread)}</span></p>
+          <p><span>HRP</span><span class="${pctClass(event.strategy)}">${formatPct(event.strategy)}</span></p>
+          <p><span>Benchmark</span><span class="${pctClass(event.benchmark)}">${formatPct(event.benchmark)}</span></p>
+          <p><span>Spread</span><span class="${pctClass(event.spread)}">${formatPct(event.spread)}</span></p>
         </article>
       `
     )
@@ -295,14 +460,7 @@ function drawMonthlyTable(rows) {
       <thead><tr><th>Month</th><th>HRP spread</th></tr></thead>
       <tbody>
         ${rows
-          .map(
-            (row) => `
-              <tr>
-                <td>${row.month}</td>
-                <td class="${pctClass(row.spread)}">${formatPct(row.spread)}</td>
-              </tr>
-            `
-          )
+          .map((row) => `<tr><td>${row.month}</td><td class="${pctClass(row.spread)}">${formatPct(row.spread)}</td></tr>`)
           .join("")}
       </tbody>
     </table>
@@ -311,12 +469,8 @@ function drawMonthlyTable(rows) {
 
 function correlationColor(value) {
   const clamped = Math.max(-1, Math.min(1, value));
-  if (clamped >= 0) {
-    const alpha = 0.25 + clamped * 0.65;
-    return `rgba(31, 111, 235, ${alpha})`;
-  }
-  const alpha = 0.25 + Math.abs(clamped) * 0.65;
-  return `rgba(194, 65, 59, ${alpha})`;
+  if (clamped >= 0) return `rgba(0, 212, 170, ${0.18 + clamped * 0.72})`;
+  return `rgba(224, 82, 82, ${0.18 + Math.abs(clamped) * 0.72})`;
 }
 
 function drawHeatmap(correlation) {
@@ -329,36 +483,29 @@ function drawHeatmap(correlation) {
     cells.push(`<div class="heatmap-label">${ticker}</div>`);
     tickers.forEach((_, columnIndex) => {
       const value = correlation.values[rowIndex][columnIndex];
-      cells.push(
-        `<div class="heatmap-cell" style="background:${correlationColor(value)}">${value.toFixed(2)}</div>`
-      );
+      cells.push(`<div class="heatmap-cell" style="background:${correlationColor(value)}">${value.toFixed(2)}</div>`);
     });
   });
 
   document.querySelector("#correlationHeatmap").innerHTML = `
-    <div class="heatmap-grid" style="grid-template-columns: repeat(${size}, minmax(54px, 1fr));">
+    <div class="heatmap-grid" style="grid-template-columns: repeat(${size}, minmax(56px, 1fr));">
       ${cells.join("")}
     </div>
   `;
 }
 
 function drawVolatility(rows) {
-  const container = document.querySelector("#volatilityList");
   const maxVol = Math.max(...rows.map((row) => row.value));
-
-  container.innerHTML = rows
-    .map((row) => {
-      const width = (row.value / maxVol) * 100;
-      return `
+  document.querySelector("#volatilityList").innerHTML = rows
+    .map(
+      (row) => `
         <div class="rank-row">
           <strong>${row.ticker}</strong>
-          <div class="bar-track">
-            <div class="bar-fill" style="width:${width}%; background:#0f8b8d;"></div>
-          </div>
+          <div class="bar-track"><div class="bar-fill" style="width:${(row.value / maxVol) * 100}%"></div></div>
           <span>${formatPct(row.value)}</span>
         </div>
-      `;
-    })
+      `
+    )
     .join("");
 }
 
@@ -367,13 +514,10 @@ function drawMarket(rows) {
     .map(
       (row) => `
         <article class="market-card">
-          <header>
-            <strong>${row.ticker}</strong>
-            <span>${formatMoney(row.latest)}</span>
-          </header>
-          <div class="market-row"><span>1 day</span><span class="${pctClass(row.oneDay)}">${formatPct(row.oneDay)}</span></div>
-          <div class="market-row"><span>5 day</span><span class="${pctClass(row.fiveDay)}">${formatPct(row.fiveDay)}</span></div>
-          <div class="market-row"><span>1 month</span><span class="${pctClass(row.oneMonth)}">${formatPct(row.oneMonth)}</span></div>
+          <header><strong>${row.ticker}</strong><span>${formatMoney(row.latest)}</span></header>
+          <div class="market-row"><span>1D</span><span class="${pctClass(row.oneDay)}">${formatPct(row.oneDay)}</span></div>
+          <div class="market-row"><span>5D</span><span class="${pctClass(row.fiveDay)}">${formatPct(row.fiveDay)}</span></div>
+          <div class="market-row"><span>1M</span><span class="${pctClass(row.oneMonth)}">${formatPct(row.oneMonth)}</span></div>
           <div class="market-row"><span>Realized vol</span><span>${formatPct(row.realizedVol)}</span></div>
           <div class="market-row"><span>Trend</span><strong>${row.trend}</strong></div>
         </article>
@@ -382,23 +526,38 @@ function drawMarket(rows) {
     .join("");
 }
 
-document.querySelectorAll(".tab-button").forEach((button) => {
+document.querySelectorAll(".nav-tab").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".tab-button").forEach((node) => node.classList.remove("active"));
+    document.querySelectorAll(".nav-tab").forEach((node) => node.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach((node) => node.classList.remove("active"));
     button.classList.add("active");
     document.querySelector(`#${button.dataset.tab}`).classList.add("active");
+    if (activeResult) {
+      requestAnimationFrame(() => renderDashboard(activeResult));
+    }
   });
 });
 
 document.querySelectorAll("[data-preset]").forEach((button) => {
   button.addEventListener("click", () => {
+    document.querySelectorAll("[data-preset]").forEach((node) => node.classList.remove("active"));
+    button.classList.add("active");
     elements.tickers.value = presets[button.dataset.preset];
   });
 });
 
+document.querySelector("#themeToggle").addEventListener("click", () => {
+  const html = document.documentElement;
+  html.dataset.theme = html.dataset.theme === "dark" ? "light" : "dark";
+  if (activeResult) requestAnimationFrame(() => renderDashboard(activeResult));
+});
+
 elements.minWeight.addEventListener("input", () => {
   elements.minWeightValue.textContent = `${elements.minWeight.value}%`;
+});
+
+window.addEventListener("resize", () => {
+  if (activeResult) requestAnimationFrame(() => renderDashboard(activeResult));
 });
 
 elements.runAnalysis.addEventListener("click", runAnalysis);

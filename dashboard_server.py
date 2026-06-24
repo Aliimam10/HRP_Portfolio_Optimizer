@@ -95,6 +95,33 @@ def frame_from_download(data, tickers):
     return prices.ffill().dropna(how="all")
 
 
+def field_from_download(data, tickers, field_name):
+    if data.empty:
+        return pd.DataFrame(columns=tickers)
+
+    if isinstance(data.columns, pd.MultiIndex):
+        first_level = data.columns.get_level_values(0)
+        second_level = data.columns.get_level_values(1)
+
+        if field_name in first_level:
+            frame = data[field_name]
+        elif field_name in second_level:
+            frame = data.xs(field_name, axis=1, level=1)
+        else:
+            return pd.DataFrame(columns=tickers)
+    elif field_name in data.columns:
+        frame = data[[field_name]].copy()
+        frame.columns = tickers[:1]
+    else:
+        return pd.DataFrame(columns=tickers)
+
+    if isinstance(frame, pd.Series):
+        frame = frame.to_frame(tickers[0])
+
+    frame = frame.reindex(columns=[ticker for ticker in tickers if ticker in frame.columns])
+    return frame.ffill().dropna(how="all")
+
+
 def download_prices(tickers, benchmark, start_date, end_date):
     download_list = clean_tickers([*tickers, benchmark])
     raw_data = yf.download(
@@ -114,7 +141,46 @@ def download_prices(tickers, benchmark, start_date, end_date):
     else:
         benchmark_prices = pd.Series(dtype=float)
 
-    return asset_prices, benchmark_prices
+    ohlc = {
+        "open": field_from_download(raw_data, download_list, "Open").reindex(columns=tickers),
+        "high": field_from_download(raw_data, download_list, "High").reindex(columns=tickers),
+        "low": field_from_download(raw_data, download_list, "Low").reindex(columns=tickers),
+        "close": field_from_download(raw_data, download_list, "Close").reindex(columns=tickers),
+    }
+
+    return asset_prices, benchmark_prices, ohlc
+
+
+def candle_payload(ohlc, tickers, lookback=180):
+    candles = {}
+
+    for ticker in tickers:
+        if ticker not in ohlc["close"]:
+            candles[ticker] = []
+            continue
+
+        ticker_frame = pd.DataFrame(
+            {
+                "open": ohlc["open"][ticker],
+                "high": ohlc["high"][ticker],
+                "low": ohlc["low"][ticker],
+                "close": ohlc["close"][ticker],
+            }
+        ).dropna()
+
+        ticker_frame = ticker_frame.tail(lookback)
+        candles[ticker] = [
+            {
+                "date": index.strftime("%Y-%m-%d"),
+                "open": safe_float(row["open"]),
+                "high": safe_float(row["high"]),
+                "low": safe_float(row["low"]),
+                "close": safe_float(row["close"]),
+            }
+            for index, row in ticker_frame.iterrows()
+        ]
+
+    return candles
 
 
 def process_returns(price_data):
@@ -295,7 +361,12 @@ def analyze_portfolio(payload):
     if min_weight * len(tickers) > 1:
         raise ValueError("The minimum weight is too high for the number of assets.")
 
-    prices, benchmark_prices = download_prices(tickers, benchmark, start_date, end_date)
+    prices, benchmark_prices, ohlc = download_prices(
+        tickers,
+        benchmark,
+        start_date,
+        end_date,
+    )
 
     if prices.empty or len(prices) < max(training_window + rebalance_freq, 100):
         raise ValueError("Not enough price history returned. Check the tickers or date range.")
@@ -390,6 +461,7 @@ def analyze_portfolio(payload):
             ],
         },
         "market": ticker_summary(prices, returns),
+        "candles": candle_payload(ohlc, tickers),
         "events": event_returns(strategy_returns, benchmark_returns),
         "monthlyLeaders": monthly_outperformance(strategy_returns, benchmark_returns),
         "clusterCount": int(len(hrp_model.clusters)) if hrp_model.clusters is not None else 0,
