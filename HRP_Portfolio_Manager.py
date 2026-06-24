@@ -9,7 +9,8 @@ Original file is located at
 
 #Section 1
 
-
+pip install PyPortfolioOpt
+import Py
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -97,7 +98,7 @@ if __name__ == "__main__":
 
 # Install pypfopt if not already installed
 
-!pip install PyPortfolioOpt
+
 
 from pypfopt import HRPOpt
 from pypfopt import plotting
