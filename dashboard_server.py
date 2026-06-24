@@ -168,6 +168,16 @@ def candle_payload(ohlc, tickers, lookback=180):
             }
         ).dropna()
 
+        ticker_frame = ticker_frame[
+            (ticker_frame["open"] > 0)
+            & (ticker_frame["high"] > 0)
+            & (ticker_frame["low"] > 0)
+            & (ticker_frame["close"] > 0)
+            & (ticker_frame["high"] >= ticker_frame[["open", "close", "low"]].max(axis=1))
+            & (ticker_frame["low"] <= ticker_frame[["open", "close", "high"]].min(axis=1))
+            & ((ticker_frame["high"] / ticker_frame["low"]) < 1.45)
+        ]
+
         ticker_frame = ticker_frame.tail(lookback)
         candles[ticker] = [
             {

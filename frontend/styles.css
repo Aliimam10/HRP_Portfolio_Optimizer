@@ -461,12 +461,42 @@ input[type="range"] {
   font-size: 0.82rem;
 }
 
+.chart-toolbar {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  max-width: 520px;
+}
+
+.range-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.range-button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.range-button.active,
+.range-button:hover {
+  color: #031b16;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .symbol-rail {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 5px;
-  max-width: 360px;
 }
 
 .symbol-button {
@@ -487,6 +517,8 @@ input[type="range"] {
 
 .canvas-shell {
   position: relative;
+  height: 350px;
+  overflow: hidden;
 }
 
 canvas {
@@ -496,6 +528,7 @@ canvas {
 
 #candleCanvas {
   cursor: crosshair;
+  height: 350px;
 }
 
 .chart-tooltip {

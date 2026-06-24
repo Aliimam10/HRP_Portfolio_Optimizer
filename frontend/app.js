@@ -8,6 +8,7 @@ const palette = ["#00d4aa", "#4f8cff", "#3dd68c", "#e8b84b", "#e05252", "#8b5cf6
 
 let activeResult = null;
 let activeTicker = null;
+let candleWindow = 45;
 let progressTimer = null;
 
 const elements = {
@@ -185,11 +186,13 @@ function renderDashboard(result) {
 function prepareCanvas(canvas) {
   const rect = canvas.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.floor(rect.width * ratio));
-  canvas.height = Math.max(1, Math.floor(canvas.getAttribute("height") * ratio));
+  const cssWidth = rect.width || Number(canvas.getAttribute("width")) || 600;
+  const cssHeight = rect.height || Number(canvas.getAttribute("height")) || 300;
+  canvas.width = Math.max(1, Math.floor(cssWidth * ratio));
+  canvas.height = Math.max(1, Math.floor(cssHeight * ratio));
   const ctx = canvas.getContext("2d");
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  return { ctx, width: rect.width, height: Number(canvas.getAttribute("height")) };
+  return { ctx, width: cssWidth, height: cssHeight };
 }
 
 function drawSymbolRail(tickers) {
@@ -209,47 +212,143 @@ function drawSymbolRail(tickers) {
   });
 }
 
+function isFinitePrice(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function quantile(values, probability) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * probability;
+  const base = Math.floor(position);
+  const rest = position - base;
+  return sorted[base + 1] !== undefined
+    ? sorted[base] + rest * (sorted[base + 1] - sorted[base])
+    : sorted[base];
+}
+
+function cleanCandles(rawCandles) {
+  const numeric = rawCandles
+    .map((row) => ({
+      date: row.date,
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+    }))
+    .filter(
+      (row) =>
+        isFinitePrice(row.open) &&
+        isFinitePrice(row.high) &&
+        isFinitePrice(row.low) &&
+        isFinitePrice(row.close) &&
+        row.high >= Math.max(row.open, row.close, row.low) &&
+        row.low <= Math.min(row.open, row.close, row.high)
+    );
+
+  if (!numeric.length) return [];
+
+  const medianClose = median(numeric.map((row) => row.close));
+  return numeric.filter(
+    (row) =>
+      row.high / row.low < 1.45 &&
+      row.high < medianClose * 2.4 &&
+      row.low > medianClose * 0.35
+  );
+}
+
+function priceTicks(minValue, maxValue, count = 5) {
+  const span = maxValue - minValue || 1;
+  const roughStep = span / Math.max(1, count - 1);
+  const exponent = Math.floor(Math.log10(roughStep));
+  const base = 10 ** exponent;
+  const fraction = roughStep / base;
+  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  const step = niceFraction * base;
+  const first = Math.ceil(minValue / step) * step;
+  const ticks = [];
+
+  for (let tick = first; tick <= maxValue + step * 0.5; tick += step) {
+    ticks.push(tick);
+  }
+
+  return ticks.length >= 3 ? ticks : [minValue, (minValue + maxValue) / 2, maxValue];
+}
+
 function drawCandles() {
   if (!activeResult || !activeTicker) return;
 
-  const candles = activeResult.candles[activeTicker] || [];
+  const rawCandles = activeResult.candles[activeTicker] || [];
+  const candles = cleanCandles(rawCandles).slice(-candleWindow);
   const canvas = elements.candleCanvas;
   const { ctx, width, height } = prepareCanvas(canvas);
-  const padding = { top: 22, right: 58, bottom: 30, left: 12 };
+  const padding = { top: 22, right: 76, bottom: 38, left: 16 };
   ctx.clearRect(0, 0, width, height);
 
   if (!candles.length) {
     ctx.fillStyle = cssVar("--text-muted");
-    ctx.fillText("No candle data returned.", 20, 40);
+    ctx.font = "12px " + cssVar("--mono");
+    ctx.fillText("No clean candle data returned.", 20, 40);
     return;
   }
 
   const lows = candles.map((row) => row.low);
   const highs = candles.map((row) => row.high);
-  const minPrice = Math.min(...lows);
-  const maxPrice = Math.max(...highs);
+  let minPrice = quantile(lows, 0.02);
+  let maxPrice = quantile(highs, 0.98);
+
+  if (maxPrice <= minPrice) {
+    minPrice = Math.min(...lows);
+    maxPrice = Math.max(...highs);
+  }
+
+  const domainPad = (maxPrice - minPrice || maxPrice * 0.02) * 0.08;
+  minPrice -= domainPad;
+  maxPrice += domainPad;
+
   const span = maxPrice - minPrice || 1;
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const slot = plotWidth / candles.length;
-  const bodyWidth = Math.max(3, Math.min(10, slot * 0.62));
+  const bodyWidth = Math.max(4, Math.min(12, slot * 0.58));
 
-  const y = (value) => padding.top + (1 - (value - minPrice) / span) * plotHeight;
+  const unclippedY = (value) => padding.top + (1 - (value - minPrice) / span) * plotHeight;
+  const y = (value) => Math.max(padding.top, Math.min(padding.top + plotHeight, unclippedY(value)));
   const x = (index) => padding.left + index * slot + slot / 2;
 
+  ctx.font = "11px " + cssVar("--mono");
+  ctx.textBaseline = "middle";
   ctx.strokeStyle = cssVar("--grid");
   ctx.lineWidth = 1;
-  ctx.font = "11px " + cssVar("--mono");
-  ctx.fillStyle = cssVar("--text-muted");
-  for (let i = 0; i <= 4; i += 1) {
-    const yPos = padding.top + (plotHeight / 4) * i;
-    const value = maxPrice - (span / 4) * i;
+
+  priceTicks(minPrice, maxPrice, 5).forEach((tick) => {
+    const yPos = y(tick);
     ctx.beginPath();
     ctx.moveTo(padding.left, yPos);
     ctx.lineTo(width - padding.right, yPos);
     ctx.stroke();
-    ctx.fillText(value.toFixed(2), width - padding.right + 8, yPos + 4);
+    ctx.fillStyle = cssVar("--text-muted");
+    ctx.fillText(tick.toFixed(2), width - padding.right + 10, yPos);
+  });
+
+  const dateTickCount = Math.min(5, candles.length);
+  for (let i = 0; i < dateTickCount; i += 1) {
+    const index = Math.round((i / Math.max(1, dateTickCount - 1)) * (candles.length - 1));
+    const xPos = x(index);
+    ctx.beginPath();
+    ctx.moveTo(xPos, padding.top);
+    ctx.lineTo(xPos, padding.top + plotHeight);
+    ctx.stroke();
+    ctx.fillStyle = cssVar("--text-muted");
+    ctx.textAlign = i === dateTickCount - 1 ? "right" : "center";
+    ctx.fillText(candles[index].date.slice(5), xPos, height - 16);
   }
+  ctx.textAlign = "left";
 
   candles.forEach((row, index) => {
     const up = row.close >= row.open;
@@ -264,6 +363,7 @@ function drawCandles() {
 
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
     ctx.moveTo(cx, highY);
     ctx.lineTo(cx, lowY);
@@ -271,9 +371,20 @@ function drawCandles() {
     ctx.fillRect(cx - bodyWidth / 2, top, bodyWidth, bodyHeight);
   });
 
-  ctx.fillStyle = cssVar("--text-muted");
-  ctx.fillText(candles[0].date, padding.left, height - 9);
-  ctx.fillText(candles[candles.length - 1].date, width - padding.right - 78, height - 9);
+  const last = candles[candles.length - 1];
+  const lastY = y(last.close);
+  ctx.strokeStyle = cssVar("--accent");
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(padding.left, lastY);
+  ctx.lineTo(width - padding.right, lastY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = cssVar("--accent");
+  ctx.fillRect(width - padding.right + 7, lastY - 9, 58, 18);
+  ctx.fillStyle = "#031b16";
+  ctx.font = "700 10px " + cssVar("--mono");
+  ctx.fillText(last.close.toFixed(2), width - padding.right + 12, lastY);
 
   canvas.onmousemove = (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -281,8 +392,8 @@ function drawCandles() {
     const index = Math.max(0, Math.min(candles.length - 1, Math.floor((mouseX - padding.left) / slot)));
     const candle = candles[index];
     elements.candleTooltip.style.display = "block";
-    elements.candleTooltip.style.left = `${Math.min(mouseX + 12, rect.width - 185)}px`;
-    elements.candleTooltip.style.top = `${event.clientY - rect.top + 14}px`;
+    elements.candleTooltip.style.left = `${Math.min(mouseX + 12, rect.width - 210)}px`;
+    elements.candleTooltip.style.top = `${Math.min(event.clientY - rect.top + 14, rect.height - 92)}px`;
     elements.candleTooltip.innerHTML = `
       <strong>${activeTicker} ${candle.date}</strong><br>
       O ${formatMoney(candle.open)} &nbsp; H ${formatMoney(candle.high)}<br>
@@ -543,6 +654,15 @@ document.querySelectorAll("[data-preset]").forEach((button) => {
     document.querySelectorAll("[data-preset]").forEach((node) => node.classList.remove("active"));
     button.classList.add("active");
     elements.tickers.value = presets[button.dataset.preset];
+  });
+});
+
+document.querySelectorAll("[data-candle-window]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-candle-window]").forEach((node) => node.classList.remove("active"));
+    button.classList.add("active");
+    candleWindow = Number(button.dataset.candleWindow);
+    drawCandles();
   });
 });
 
